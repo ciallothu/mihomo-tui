@@ -5,7 +5,9 @@ use std::{
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind},
+    event::{
+        self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -35,11 +37,7 @@ pub async fn run(mut app: App) -> Result<()> {
 fn init_terminal() -> Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture
-    )?;
+    execute!(stdout, EnterAlternateScreen, event::EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     Ok(Terminal::new(backend)?)
 }
@@ -113,13 +111,9 @@ async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
                         a.selected_group = i
                     });
                 } else if body[1].contains(pos) {
-                    handle_list_click(
-                        app,
-                        mouse,
-                        body[1],
-                        app.snapshot.resources.len(),
-                        |a, i| a.selected_resource = i,
-                    );
+                    handle_list_click(app, mouse, body[1], app.snapshot.resources.len(), |a, i| {
+                        a.selected_resource = i
+                    });
                 } else if body[2].contains(pos) {
                     handle_list_click(app, mouse, body[2], app.snapshot.logs.len(), |a, i| {
                         a.selected_log = i
@@ -132,19 +126,19 @@ async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
                     handle_list_click(app, mouse, columns[0], app.snapshot.groups.len(), |a, i| {
                         a.selected_group = i
                     });
-                } else if columns[1].contains(pos) {
-                    if let Some(group) = app.snapshot.groups.get(app.selected_group) {
-                        let inner = columns[1].inner(Margin::new(1, 1));
-                        if inner.contains(pos) {
-                            let item_index = (mouse.row - inner.y) as usize;
-                            if item_index < group.proxies.len() {
-                                let group_name = group.name.clone();
-                                let proxy = group.proxies[item_index].name.clone();
-                                if let Err(e) = app.client.select_proxy(&group_name, &proxy).await {
-                                    app.status_message = format!("proxy switch failed: {e:#}");
-                                } else {
-                                    app.refresh().await;
-                                }
+                } else if columns[1].contains(pos)
+                    && let Some(group) = app.snapshot.groups.get(app.selected_group)
+                {
+                    let inner = columns[1].inner(Margin::new(1, 1));
+                    if inner.contains(pos) {
+                        let item_index = (mouse.row - inner.y) as usize;
+                        if item_index < group.proxies.len() {
+                            let group_name = group.name.clone();
+                            let proxy = group.proxies[item_index].name.clone();
+                            if let Err(e) = app.client.select_proxy(&group_name, &proxy).await {
+                                app.status_message = format!("proxy switch failed: {e:#}");
+                            } else {
+                                app.refresh().await;
                             }
                         }
                     }
@@ -549,7 +543,7 @@ fn render_resource_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let len = app.snapshot.logs.len();
     let start = len.saturating_sub(area.height.saturating_sub(2) as usize);
-    let list_width = area.width.saturating_sub(2) as usize; 
+    let list_width = area.width.saturating_sub(2) as usize;
 
     let items = app.snapshot.logs[start..]
         .iter()
@@ -561,12 +555,12 @@ fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
             } else {
                 Style::default()
             };
-            
+
             let time_str = entry.time.format("%H:%M:%S ").to_string();
             let level_str = format!("{} ", entry.level.to_uppercase());
             let prefix_len = time_str.len() + level_str.len();
             let available_width = list_width.saturating_sub(prefix_len).max(10);
-            
+
             let wrapped_message = textwrap::fill(&entry.message, available_width);
             let mut lines = Vec::new();
             for (i, msg_line) in wrapped_message.lines().enumerate() {
@@ -583,7 +577,7 @@ fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     ]));
                 }
             }
-            
+
             ListItem::new(lines).style(style)
         })
         .collect::<Vec<_>>();
