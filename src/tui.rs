@@ -86,15 +86,12 @@ async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
         if header_layout[1].contains(pos) {
             let tabs_area = header_layout[1].inner(Margin::new(1, 1));
             let tab_count = Tab::ALL.len() as u16;
-            if tab_count > 0 {
-                let tab_width = tabs_area.width / tab_count;
-                if tab_width > 0 {
-                    let tab_index = (mouse.column - tabs_area.x) / tab_width;
-                    if (tab_index as usize) < Tab::ALL.len() {
-                        app.active_tab = Tab::ALL[tab_index as usize];
-                        app.refresh().await;
-                    }
-                }
+            if let Some(tab_width) = tabs_area.width.checked_div(tab_count)
+                && let Some(tab_index) = (mouse.column - tabs_area.x).checked_div(tab_width)
+                && (tab_index as usize) < Tab::ALL.len()
+            {
+                app.active_tab = Tab::ALL[tab_index as usize];
+                app.refresh().await;
             }
         }
     }
