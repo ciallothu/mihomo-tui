@@ -32,7 +32,7 @@ jobs:
             binary: mihomo-tui.exe
             package: mihomo-tui-windows-x86_64.zip
           - name: macos-x86_64
-            os: macos-latest
+            os: macos-13
             target: x86_64-apple-darwin
             binary: mihomo-tui
             package: mihomo-tui-macos-x86_64.tar.gz
