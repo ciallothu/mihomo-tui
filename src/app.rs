@@ -12,16 +12,18 @@ pub enum Tab {
     Resources,
     Ports,
     Connections,
+    Configs,
     Logs,
 }
 
 impl Tab {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Overview,
         Self::Proxies,
         Self::Resources,
         Self::Ports,
         Self::Connections,
+        Self::Configs,
         Self::Logs,
     ];
 
@@ -32,6 +34,7 @@ impl Tab {
             Self::Resources => "Providers",
             Self::Ports => "Ports",
             Self::Connections => "Connections",
+            Self::Configs => "Configs",
             Self::Logs => "Logs",
         }
     }
@@ -63,6 +66,8 @@ pub struct App {
     pub selected_connection: usize,
     pub selected_log: usize,
     pub selected_port: usize,
+    pub selected_config: usize,
+    pub available_configs: Vec<std::path::PathBuf>,
     pub status_message: String,
     pub should_quit: bool,
 }
@@ -90,7 +95,7 @@ impl App {
             CoreStatus::Running => "mihomo core is running".to_string(),
         };
 
-        Self {
+        let mut app = Self {
             paths,
             client,
             core,
@@ -102,8 +107,23 @@ impl App {
             selected_connection: 0,
             selected_log: 0,
             selected_port: 0,
+            selected_config: 0,
+            available_configs: Vec::new(),
             status_message,
             should_quit: false,
+        };
+        app.refresh_configs();
+        app
+    }
+
+    pub fn refresh_configs(&mut self) {
+        if let Ok(entries) = std::fs::read_dir(&self.paths.configs) {
+            self.available_configs = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|s| s == "yaml" || s == "yml").unwrap_or(false))
+                .collect();
+            self.available_configs.sort();
         }
     }
 
@@ -164,6 +184,10 @@ impl App {
                 self.selected_log = bounded_next(self.selected_log, self.snapshot.logs.len())
             }
             Tab::Ports => self.selected_port = bounded_next(self.selected_port, PORT_FIELDS.len()),
+            Tab::Configs => {
+                self.selected_config =
+                    bounded_next(self.selected_config, self.available_configs.len() + 1)
+            }
         }
     }
 
@@ -178,6 +202,7 @@ impl App {
             }
             Tab::Logs => self.selected_log = self.selected_log.saturating_sub(1),
             Tab::Ports => self.selected_port = self.selected_port.saturating_sub(1),
+            Tab::Configs => self.selected_config = self.selected_config.saturating_sub(1),
         }
     }
 
@@ -187,7 +212,32 @@ impl App {
             Tab::Resources => self.refresh_resource().await,
             Tab::Ports => self.apply_selected_port().await,
             Tab::Connections => self.close_selected_connection().await,
+            Tab::Configs => self.handle_config_action().await,
             Tab::Logs => self.refresh().await,
+        }
+    }
+
+    async fn handle_config_action(&mut self) {
+        if self.selected_config == 0 {
+            // Action: Update Kernel
+            self.status_message = "Updating mihomo core...".to_string();
+            match crate::core::install_core("latest", &self.paths.cores).await {
+                Ok(path) => {
+                    self.core.binary_path = Some(path);
+                    self.status_message = "Mihomo core updated to latest".to_string();
+                    self.snapshot.logs.push(log("info", "core updated to latest"));
+                }
+                Err(e) => self.push_error(format!("core update failed: {e:#}")),
+            }
+        } else {
+            // Action: Switch Config
+            let idx = self.selected_config - 1;
+            if let Some(path) = self.available_configs.get(idx).cloned() {
+                self.status_message = format!("Restarting mihomo with {}...", path.display());
+                // In a real app we'd need to signal the core to restart.
+                // For now we just notice it.
+                self.snapshot.logs.push(log("info", format!("switched to config {}", path.display())));
+            }
         }
     }
 

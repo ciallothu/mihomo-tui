@@ -86,12 +86,16 @@ async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
         if header_layout[1].contains(pos) {
             let tabs_area = header_layout[1].inner(Margin::new(1, 1));
             let tab_count = Tab::ALL.len() as u16;
-            if let Some(tab_width) = tabs_area.width.checked_div(tab_count)
-                && let Some(tab_index) = (mouse.column - tabs_area.x).checked_div(tab_width)
-                && (tab_index as usize) < Tab::ALL.len()
-            {
-                app.active_tab = Tab::ALL[tab_index as usize];
-                app.refresh().await;
+            if tab_count > 0 && tabs_area.width > 0 {
+                let tab_width = tabs_area.width / tab_count;
+                if tab_width > 0 {
+                    let click_x = mouse.column.saturating_sub(tabs_area.x);
+                    let tab_index = (click_x / tab_width) as usize;
+                    if tab_index < Tab::ALL.len() {
+                        app.active_tab = Tab::ALL[tab_index];
+                        app.refresh().await;
+                    }
+                }
             }
         }
     }
@@ -169,6 +173,15 @@ async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
                 handle_list_click(app, mouse, body_area, app.snapshot.logs.len(), |a, i| {
                     a.selected_log = i
                 });
+            }
+            Tab::Configs => {
+                handle_list_click(
+                    app,
+                    mouse,
+                    body_area,
+                    app.available_configs.len() + 1,
+                    |a, i| a.selected_config = i,
+                );
             }
             Tab::Ports => {
                 let rows = Layout::default()
@@ -282,6 +295,7 @@ fn render(frame: &mut Frame<'_>, app: &App) {
         Tab::Resources => render_resources(frame, app, layout[1]),
         Tab::Ports => render_ports(frame, app, layout[1]),
         Tab::Connections => render_connections(frame, app, layout[1]),
+        Tab::Configs => render_configs(frame, app, layout[1]),
         Tab::Logs => render_logs(frame, app, layout[1]),
     }
     render_footer(frame, app, layout[2]);
@@ -515,6 +529,34 @@ fn render_logs(frame: &mut Frame<'_>, app: &App, area: Rect) {
     render_log_list(frame, app, area);
 }
 
+fn render_configs(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let mut items = vec![ListItem::new(Line::from(vec![
+        marker(app.selected_config == 0),
+        Span::styled("Update Mihomo Core", Color::Yellow),
+        Span::raw(" (Download latest release)"),
+    ]))];
+
+    for (i, path) in app.available_configs.iter().enumerate() {
+        let idx = i + 1;
+        let selected = app.selected_config == idx;
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown.yaml");
+        items.push(ListItem::new(Line::from(vec![
+            marker(selected),
+            Span::raw(name),
+        ])));
+    }
+
+    frame.render_widget(
+        List::new(items)
+            .block(block("Configs & Actions"))
+            .highlight_style(selected_style()),
+        area,
+    );
+}
+
 fn render_group_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let items = app
         .snapshot
@@ -539,8 +581,17 @@ fn render_resource_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let len = app.snapshot.logs.len();
-    let start = len.saturating_sub(area.height.saturating_sub(2) as usize);
+    if len == 0 {
+        frame.render_widget(block("Logs"), area);
+        return;
+    }
+
     let list_width = area.width.saturating_sub(2) as usize;
+    let max_items = area.height.saturating_sub(2) as usize;
+    let start = len.saturating_sub(max_items);
+
+    // If on Overview, just show simple one-liners to save CPU
+    let is_overview = app.active_tab == Tab::Overview;
 
     let items = app.snapshot.logs[start..]
         .iter()
@@ -555,32 +606,52 @@ fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
             let time_str = entry.time.format("%H:%M:%S ").to_string();
             let level_str = format!("{} ", entry.level.to_uppercase());
-            let prefix_len = time_str.len() + level_str.len();
-            let available_width = list_width.saturating_sub(prefix_len).max(10);
 
-            let wrapped_message = textwrap::fill(&entry.message, available_width);
-            let mut lines = Vec::new();
-            for (i, msg_line) in wrapped_message.lines().enumerate() {
-                if i == 0 {
-                    lines.push(Line::from(vec![
-                        Span::styled(time_str.clone(), Color::DarkGray),
-                        Span::styled(level_str.clone(), level_style(&entry.level)),
-                        Span::raw(msg_line.to_string()),
-                    ]));
+            if is_overview {
+                // Simplified view for Overview tab
+                ListItem::new(Line::from(vec![
+                    Span::styled(time_str, Color::DarkGray),
+                    Span::styled(level_str, level_style(&entry.level)),
+                    Span::raw(&entry.message),
+                ]))
+                .style(style)
+            } else {
+                // Wrapped view for Logs tab
+                let prefix_len = time_str.len() + level_str.len();
+                let available_width = list_width.saturating_sub(prefix_len).max(10);
+
+                // Only wrap if the message is actually longer than available width
+                if entry.message.len() > available_width {
+                    let wrapped_message = textwrap::fill(&entry.message, available_width);
+                    let mut lines = Vec::new();
+                    for (i, msg_line) in wrapped_message.lines().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(time_str.clone(), Color::DarkGray),
+                                Span::styled(level_str.clone(), level_style(&entry.level)),
+                                Span::raw(msg_line.to_string()),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw(" ".repeat(prefix_len)),
+                                Span::raw(msg_line.to_string()),
+                            ]));
+                        }
+                    }
+                    ListItem::new(lines).style(style)
                 } else {
-                    lines.push(Line::from(vec![
-                        Span::raw(" ".repeat(prefix_len)),
-                        Span::raw(msg_line.to_string()),
-                    ]));
+                    ListItem::new(Line::from(vec![
+                        Span::styled(time_str, Color::DarkGray),
+                        Span::styled(level_str, level_style(&entry.level)),
+                        Span::raw(&entry.message),
+                    ]))
+                    .style(style)
                 }
             }
-
-            ListItem::new(lines).style(style)
         })
         .collect::<Vec<_>>();
     frame.render_widget(List::new(items).block(block("Logs")), area);
 }
-
 fn group_item(group: &ProxyGroup, selected: bool) -> ListItem<'static> {
     let current = group
         .proxies

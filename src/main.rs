@@ -102,6 +102,12 @@ async fn main() -> Result<()> {
         core_path = Some(installed);
     }
 
+    if cli.start_core && active_config.is_none() {
+        let default_config = config_manager.ensure_default_config()?;
+        notices.push(format!("Using default config for startup: {}", default_config.display()));
+        active_config = Some(default_config);
+    }
+
     let mut child = start_core_if_requested(
         cli.start_core,
         core_path.as_ref(),

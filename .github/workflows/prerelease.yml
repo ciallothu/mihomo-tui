@@ -26,16 +26,21 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: mihomo-tui
             package: mihomo-tui-linux-x86_64.tar.gz
+          - name: linux-aarch64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            binary: mihomo-tui
+            package: mihomo-tui-linux-aarch64.tar.gz
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: mihomo-tui.exe
             package: mihomo-tui-windows-x86_64.zip
-          - name: macos-x86_64
-            os: macos-13
-            target: x86_64-apple-darwin
-            binary: mihomo-tui
-            package: mihomo-tui-macos-x86_64.tar.gz
+          - name: windows-aarch64
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+            binary: mihomo-tui.exe
+            package: mihomo-tui-windows-aarch64.zip
           - name: macos-aarch64
             os: macos-latest
             target: aarch64-apple-darwin
@@ -62,14 +67,31 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install cross-compilation tools
+        if: contains(matrix.target, 'aarch64-unknown-linux-gnu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Run CI checks before preview
         run: |
           cargo fmt --all -- --check
-          cargo clippy --all-targets --all-features --locked -- -D warnings
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+             # Skip clippy for cross-target on PR for speed, or just run native
+             cargo clippy --all-targets --all-features --locked -- -D warnings
+          else
+             cargo clippy --all-targets --all-features --locked -- -D warnings
+          fi
           cargo test --all-targets --all-features --locked
+        shell: bash
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
 
       - name: Package Unix binary
         if: runner.os != 'Windows'

@@ -213,14 +213,14 @@ impl MihomoClient {
             );
         }
 
-        let connect = timeout(Duration::from_millis(450), connect_async(request)).await;
+        let connect = timeout(Duration::from_millis(50), connect_async(request)).await;
         let Ok(Ok((mut socket, _))) = connect else {
             return Ok(Vec::new());
         };
 
         let mut entries = Vec::new();
-        for _ in 0..8 {
-            let next = timeout(Duration::from_millis(80), socket.next()).await;
+        for _ in 0..10 {
+            let next = timeout(Duration::from_millis(10), socket.next()).await;
             let Ok(Some(Ok(message))) = next else {
                 break;
             };

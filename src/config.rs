@@ -32,7 +32,19 @@ impl ConfigManager {
         fs::create_dir_all(&paths.cores).context("create core directory")?;
         fs::create_dir_all(&paths.subscriptions).context("create subscription directory")?;
 
-        Ok(Self { paths })
+        let manager = Self { paths };
+        manager.ensure_default_config()?;
+
+        Ok(manager)
+    }
+
+    pub fn ensure_default_config(&self) -> Result<PathBuf> {
+        let target = self.paths.configs.join("default.yaml");
+        if !target.exists() {
+            let default_config = "mixed-port: 7890\nmode: direct\nexternal-controller: 127.0.0.1:9090\nallow-lan: true\nlog-level: info\n";
+            fs::write(&target, default_config).context("write default config")?;
+        }
+        Ok(target)
     }
 
     pub fn paths(&self) -> &AppPaths {
