@@ -121,7 +121,11 @@ impl App {
             self.available_configs = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.extension().map(|s| s == "yaml" || s == "yml").unwrap_or(false))
+                .filter(|p| {
+                    p.extension()
+                        .map(|s| s == "yaml" || s == "yml")
+                        .unwrap_or(false)
+                })
                 .collect();
             self.available_configs.sort();
         }
@@ -225,7 +229,9 @@ impl App {
                 Ok(path) => {
                     self.core.binary_path = Some(path);
                     self.status_message = "Mihomo core updated to latest".to_string();
-                    self.snapshot.logs.push(log("info", "core updated to latest"));
+                    self.snapshot
+                        .logs
+                        .push(log("info", "core updated to latest"));
                 }
                 Err(e) => self.push_error(format!("core update failed: {e:#}")),
             }
@@ -236,7 +242,10 @@ impl App {
                 self.status_message = format!("Restarting mihomo with {}...", path.display());
                 // In a real app we'd need to signal the core to restart.
                 // For now we just notice it.
-                self.snapshot.logs.push(log("info", format!("switched to config {}", path.display())));
+                self.snapshot.logs.push(log(
+                    "info",
+                    format!("switched to config {}", path.display()),
+                ));
             }
         }
     }

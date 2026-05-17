@@ -104,7 +104,10 @@ async fn main() -> Result<()> {
 
     if cli.start_core && active_config.is_none() {
         let default_config = config_manager.ensure_default_config()?;
-        notices.push(format!("Using default config for startup: {}", default_config.display()));
+        notices.push(format!(
+            "Using default config for startup: {}",
+            default_config.display()
+        ));
         active_config = Some(default_config);
     }
 
