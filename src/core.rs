@@ -104,6 +104,22 @@ impl MihomoCore {
     }
 }
 
+pub fn find_default_core(cores_dir: &Path) -> Option<PathBuf> {
+    let binary = binary_name();
+    let mut candidates = Vec::new();
+
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+    {
+        candidates.push(exe_dir.join(binary));
+        candidates.push(exe_dir.join("core").join(binary));
+    }
+
+    candidates.push(cores_dir.join(binary));
+    candidates.extend(versioned_core_candidates(cores_dir, binary));
+    candidates.into_iter().find(|path| path.is_file())
+}
+
 pub fn start_core(binary_path: &Path, config_path: &Path) -> Result<Child> {
     if !binary_path.exists() {
         bail!("mihomo binary does not exist: {}", binary_path.display());
@@ -144,11 +160,7 @@ pub async fn install_core(version: &str, cores_dir: &Path) -> Result<PathBuf> {
         .await
         .context("read mihomo asset")?;
 
-    let binary_name = if cfg!(windows) {
-        "mihomo.exe"
-    } else {
-        "mihomo"
-    };
+    let binary_name = binary_name();
     let target = cores_dir.join(format!("{}-{}", release.tag_name, binary_name));
 
     if asset.name.ends_with(".gz") {
@@ -179,7 +191,11 @@ pub async fn install_core(version: &str, cores_dir: &Path) -> Result<PathBuf> {
     }
 
     make_executable(&target)?;
-    Ok(target)
+    let default_target = cores_dir.join(binary_name);
+    fs::copy(&target, &default_target)
+        .with_context(|| format!("update default core {}", default_target.display()))?;
+    make_executable(&default_target)?;
+    Ok(default_target)
 }
 
 async fn fetch_release(client: &Client, version: &str) -> Result<Release> {
@@ -265,6 +281,32 @@ fn asset_score(name: &str) -> i32 {
         score += 1;
     }
     score
+}
+
+fn binary_name() -> &'static str {
+    if cfg!(windows) {
+        "mihomo.exe"
+    } else {
+        "mihomo"
+    }
+}
+
+fn versioned_core_candidates(cores_dir: &Path, binary: &str) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(cores_dir) else {
+        return Vec::new();
+    };
+    let mut paths = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(binary))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.reverse();
+    paths
 }
 
 #[cfg(unix)]

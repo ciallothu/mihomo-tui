@@ -40,7 +40,7 @@ struct Cli {
     #[arg(long)]
     install_core: Option<String>,
 
-    /// Start mihomo with --core and --config before opening the TUI.
+    /// Start mihomo with the bundled/default core and an imported config before opening the TUI.
     #[arg(long)]
     start_core: bool,
 
@@ -81,6 +81,25 @@ async fn main() -> Result<()> {
         let pulled = config_manager.pull_subscription(url).await?;
         notices.push(format!("Pulled subscription: {}", pulled.display()));
         active_config = Some(pulled);
+    }
+
+    if core_path.is_none() {
+        core_path = core::find_default_core(&config_manager.paths().cores);
+        if let Some(path) = core_path.as_ref() {
+            notices.push(format!(
+                "Using bundled/default mihomo core: {}",
+                path.display()
+            ));
+        }
+    }
+
+    if cli.start_core && core_path.is_none() {
+        let installed = core::install_core("latest", &config_manager.paths().cores).await?;
+        notices.push(format!(
+            "Installed latest mihomo core for startup: {}",
+            installed.display()
+        ));
+        core_path = Some(installed);
     }
 
     let mut child = start_core_if_requested(
