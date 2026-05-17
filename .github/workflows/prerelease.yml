@@ -1,0 +1,134 @@
+name: PR Pre-release
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  build:
+    name: Build preview ${{ matrix.name }}
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: mihomo-tui
+            package: mihomo-tui-linux-x86_64.tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: mihomo-tui.exe
+            package: mihomo-tui-windows-x86_64.zip
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            binary: mihomo-tui
+            package: mihomo-tui-macos-x86_64.tar.gz
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            binary: mihomo-tui
+            package: mihomo-tui-macos-aarch64.tar.gz
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run CI checks before preview
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+          cargo test --all-targets --all-features --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/package
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/package/mihomo-tui"
+          cp README.md dist/package/
+          tar -czf "dist/${{ matrix.package }}" -C dist/package .
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/package | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/package/mihomo-tui.exe"
+          Copy-Item README.md dist/package/
+          Compress-Archive -Path dist/package/* -DestinationPath "dist/${{ matrix.package }}"
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package }}
+          path: dist/${{ matrix.package }}
+          if-no-files-found: error
+
+  prerelease:
+    name: Publish rolling PR pre-release
+    needs: build
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Download preview artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Replace previous PR pre-release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.server_url }}/${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="pr-${PR_NUMBER}"
+          notes="Rolling preview build for ${PR_URL} at ${PR_SHA}."
+
+          gh release delete "${tag}" --yes --cleanup-tag || true
+          git push origin ":refs/tags/${tag}" || true
+
+          git tag -f "${tag}" "${PR_SHA}"
+          git push origin "refs/tags/${tag}"
+
+          mapfile -t assets < <(find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          gh release create "${tag}" "${assets[@]}" \
+            --prerelease \
+            --title "PR #${PR_NUMBER} preview" \
+            --notes "${notes}"
