@@ -47,13 +47,19 @@ def main() -> int:
 
 
 def fetch_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "mihomo-tui-ci"})
+    headers = {"User-Agent": "mihomo-tui-ci"}
+    if token := os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def download(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "mihomo-tui-ci"})
+    headers = {"User-Agent": "mihomo-tui-ci"}
+    if token := os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request) as response:
         return response.read()
 
@@ -66,7 +72,7 @@ def choose_asset(assets: list[dict], target: str) -> dict | None:
         if (
             os_name in name
             and arch in name
-            and name.endswith(extension)
+            and (name.endswith(extension) or name.endswith(".gz") or name.endswith(".zip"))
             and "android" not in name
         ):
             candidates.append(asset)
@@ -116,10 +122,13 @@ def extract_zip_binary(archive: bytes, binary_path: Path) -> None:
 
     with zipfile.ZipFile(BytesIO(archive)) as zipped:
         for entry in zipped.infolist():
-            lower = entry.filename.lower()
-            if lower.endswith("mihomo.exe") or lower.endswith("mihomo"):
+            name = entry.filename.lower()
+            if name.endswith(".exe") and ("mihomo" in name or "clash" in name):
                 binary_path.write_bytes(zipped.read(entry))
                 return
+            if (name == "mihomo" or name == "clash") and not name.endswith(".exe"):
+                 binary_path.write_bytes(zipped.read(entry))
+                 return
     raise RuntimeError("mihomo executable not found in zip asset")
 
 

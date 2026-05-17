@@ -5,14 +5,14 @@ use std::{
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect},
     prelude::{Color, Line, Modifier, Span, Style},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Tabs, Wrap},
 };
@@ -35,14 +35,22 @@ pub async fn run(mut app: App) -> Result<()> {
 fn init_terminal() -> Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        event::EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
     Ok(Terminal::new(backend)?)
 }
 
 fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        event::DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -54,6 +62,7 @@ async fn run_loop(terminal: &mut Tui, app: &mut App) -> Result<()> {
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key).await,
+                Event::Mouse(mouse) => handle_mouse(app, mouse, terminal.size()?.into()).await,
                 Event::Resize(_, _) => {}
                 _ => {}
             }
@@ -63,6 +72,144 @@ async fn run_loop(terminal: &mut Tui, app: &mut App) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
+    if mouse.kind != MouseEventKind::Down(event::MouseButton::Left) {
+        return;
+    }
+
+    let pos = Position::new(mouse.column, mouse.row);
+    let layout = main_layout(area);
+
+    // Header (Tabs)
+    if layout[0].contains(pos) {
+        let header_layout = header_layout(layout[0]);
+        if header_layout[1].contains(pos) {
+            let tabs_area = header_layout[1].inner(Margin::new(1, 1));
+            let tab_count = Tab::ALL.len() as u16;
+            if tab_count > 0 {
+                let tab_width = tabs_area.width / tab_count;
+                if tab_width > 0 {
+                    let tab_index = (mouse.column - tabs_area.x) / tab_width;
+                    if (tab_index as usize) < Tab::ALL.len() {
+                        app.active_tab = Tab::ALL[tab_index as usize];
+                        app.refresh().await;
+                    }
+                }
+            }
+        }
+    }
+
+    // Body
+    if layout[1].contains(pos) {
+        let body_area = layout[1];
+        match app.active_tab {
+            Tab::Overview => {
+                let rows = overview_rows(body_area);
+                let body = overview_body(rows[1]);
+                if body[0].contains(pos) {
+                    handle_list_click(app, mouse, body[0], app.snapshot.groups.len(), |a, i| {
+                        a.selected_group = i
+                    });
+                } else if body[1].contains(pos) {
+                    handle_list_click(
+                        app,
+                        mouse,
+                        body[1],
+                        app.snapshot.resources.len(),
+                        |a, i| a.selected_resource = i,
+                    );
+                } else if body[2].contains(pos) {
+                    handle_list_click(app, mouse, body[2], app.snapshot.logs.len(), |a, i| {
+                        a.selected_log = i
+                    });
+                }
+            }
+            Tab::Proxies => {
+                let columns = two_column_layout(body_area, 40);
+                if columns[0].contains(pos) {
+                    handle_list_click(app, mouse, columns[0], app.snapshot.groups.len(), |a, i| {
+                        a.selected_group = i
+                    });
+                } else if columns[1].contains(pos) {
+                    if let Some(group) = app.snapshot.groups.get(app.selected_group) {
+                        let inner = columns[1].inner(Margin::new(1, 1));
+                        if inner.contains(pos) {
+                            let item_index = (mouse.row - inner.y) as usize;
+                            if item_index < group.proxies.len() {
+                                let group_name = group.name.clone();
+                                let proxy = group.proxies[item_index].name.clone();
+                                if let Err(e) = app.client.select_proxy(&group_name, &proxy).await {
+                                    app.status_message = format!("proxy switch failed: {e:#}");
+                                } else {
+                                    app.refresh().await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Tab::Resources => {
+                let columns = two_column_layout(body_area, 45);
+                if columns[0].contains(pos) {
+                    handle_list_click(
+                        app,
+                        mouse,
+                        columns[0],
+                        app.snapshot.resources.len(),
+                        |a, i| a.selected_resource = i,
+                    );
+                }
+            }
+            Tab::Connections => {
+                let columns = two_column_layout(body_area, 45);
+                if columns[0].contains(pos) {
+                    handle_list_click(
+                        app,
+                        mouse,
+                        columns[0],
+                        app.snapshot.connections.len(),
+                        |a, i| a.selected_connection = i,
+                    );
+                }
+            }
+            Tab::Logs => {
+                handle_list_click(app, mouse, body_area, app.snapshot.logs.len(), |a, i| {
+                    a.selected_log = i
+                });
+            }
+            Tab::Ports => {
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(5), Constraint::Min(8)])
+                    .split(body_area);
+                if rows[1].contains(pos) {
+                    let inner = rows[1].inner(Margin::new(1, 1));
+                    if inner.contains(pos) {
+                        let item_index = (mouse.row - inner.y).saturating_sub(1) as usize;
+                        if item_index < PORT_FIELDS.len() {
+                            app.selected_port = item_index;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_list_click<F>(app: &mut App, mouse: MouseEvent, area: Rect, len: usize, set_idx: F)
+where
+    F: FnOnce(&mut App, usize),
+{
+    let inner = area.inner(Margin::new(1, 1));
+    let pos = Position::new(mouse.column, mouse.row);
+    if inner.contains(pos) {
+        let item_index = (mouse.row - inner.y) as usize;
+        if item_index < len {
+            set_idx(app, item_index);
+        }
+    }
 }
 
 async fn handle_key(app: &mut App, key: KeyEvent) {
@@ -87,16 +234,55 @@ async fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn render(frame: &mut Frame<'_>, app: &App) {
-    let area = frame.area();
-    let layout = Layout::default()
+fn main_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(8),
             Constraint::Length(3),
         ])
-        .split(area);
+        .split(area)
+}
+
+fn header_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(26), Constraint::Min(20)])
+        .split(area)
+}
+
+fn overview_rows(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(7), Constraint::Min(10)])
+        .split(area)
+}
+
+fn overview_body(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(45),
+            Constraint::Percentage(25),
+            Constraint::Percentage(30),
+        ])
+        .split(area)
+}
+
+fn two_column_layout(area: Rect, left_pct: u16) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(left_pct),
+            Constraint::Percentage(100 - left_pct),
+        ])
+        .split(area)
+}
+
+fn render(frame: &mut Frame<'_>, app: &App) {
+    let area = frame.area();
+    let layout = main_layout(area);
 
     render_header(frame, app, layout[0]);
     match app.active_tab {
@@ -111,10 +297,7 @@ fn render(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(26), Constraint::Min(20)])
-        .split(area);
+    let chunks = header_layout(area);
 
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -179,10 +362,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_overview(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(10)])
-        .split(area);
+    let rows = overview_rows(area);
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -196,14 +376,7 @@ fn render_overview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     render_traffic_card(frame, app, top[1]);
     render_ports_card(frame, app, top[2]);
 
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(45),
-            Constraint::Percentage(25),
-            Constraint::Percentage(30),
-        ])
-        .split(rows[1]);
+    let body = overview_body(rows[1]);
     render_group_list(frame, app, body[0]);
     render_resource_list(frame, app, body[1]);
     render_log_list(frame, app, body[2]);
@@ -262,10 +435,7 @@ fn render_ports_card(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_proxies(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(area);
+    let columns = two_column_layout(area, 40);
     render_group_list(frame, app, columns[0]);
 
     let group = app.snapshot.groups.get(app.selected_group);
@@ -277,10 +447,7 @@ fn render_proxies(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_resources(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(area);
+    let columns = two_column_layout(area, 45);
     render_resource_list(frame, app, columns[0]);
 
     let selected = app.snapshot.resources.get(app.selected_resource);
@@ -328,10 +495,7 @@ fn render_ports(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_connections(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(area);
+    let columns = two_column_layout(area, 45);
 
     let items = app
         .snapshot
@@ -385,6 +549,8 @@ fn render_resource_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let len = app.snapshot.logs.len();
     let start = len.saturating_sub(area.height.saturating_sub(2) as usize);
+    let list_width = area.width.saturating_sub(2) as usize; 
+
     let items = app.snapshot.logs[start..]
         .iter()
         .enumerate()
@@ -395,14 +561,30 @@ fn render_log_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
             } else {
                 Style::default()
             };
-            ListItem::new(Line::from(vec![
-                Span::styled(entry.time.format("%H:%M:%S").to_string(), Color::DarkGray),
-                Span::raw(" "),
-                Span::styled(entry.level.to_uppercase(), level_style(&entry.level)),
-                Span::raw(" "),
-                Span::raw(&entry.message),
-            ]))
-            .style(style)
+            
+            let time_str = entry.time.format("%H:%M:%S ").to_string();
+            let level_str = format!("{} ", entry.level.to_uppercase());
+            let prefix_len = time_str.len() + level_str.len();
+            let available_width = list_width.saturating_sub(prefix_len).max(10);
+            
+            let wrapped_message = textwrap::fill(&entry.message, available_width);
+            let mut lines = Vec::new();
+            for (i, msg_line) in wrapped_message.lines().enumerate() {
+                if i == 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled(time_str.clone(), Color::DarkGray),
+                        Span::styled(level_str.clone(), level_style(&entry.level)),
+                        Span::raw(msg_line.to_string()),
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::raw(" ".repeat(prefix_len)),
+                        Span::raw(msg_line.to_string()),
+                    ]));
+                }
+            }
+            
+            ListItem::new(lines).style(style)
         })
         .collect::<Vec<_>>();
     frame.render_widget(List::new(items).block(block("Logs")), area);

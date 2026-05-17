@@ -273,7 +273,9 @@ fn asset_score(name: &str) -> i32 {
     if lower.contains("-v1-") {
         score += 20;
     }
-    if lower.contains("go124") {
+    if lower.contains("go125") {
+        score += 4;
+    } else if lower.contains("go124") {
         score += 3;
     } else if lower.contains("go122") {
         score += 2;

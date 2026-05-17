@@ -80,6 +80,8 @@ jobs:
           python scripts/download_mihomo_core.py "${{ matrix.target }}" dist/package
           cp README.md dist/package/
           tar -czf "dist/${{ matrix.package }}" -C dist/package .
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
@@ -90,6 +92,8 @@ jobs:
           python scripts/download_mihomo_core.py "${{ matrix.target }}" dist/package
           Copy-Item README.md dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath "dist/${{ matrix.package }}"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload preview artifact
         uses: actions/upload-artifact@v4
@@ -125,9 +129,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="pr-${PR_NUMBER}"
+          tag="pr-${PR_NUMBER}-${PR_SHA:0:7}"
           notes="Rolling preview build for ${PR_URL} at ${PR_SHA}."
 
+          # Delete any previous release with the same tag if it exists (unlikely with SHA)
           gh release delete "${tag}" --yes --cleanup-tag || true
           git push origin ":refs/tags/${tag}" || true
 
