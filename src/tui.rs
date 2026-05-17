@@ -88,9 +88,12 @@ async fn handle_mouse(app: &mut App, mouse: MouseEvent, area: Rect) {
             let tab_count = Tab::ALL.len() as u16;
             if tab_count > 0 && tabs_area.width > 0 {
                 let tab_width = tabs_area.width / tab_count;
-                if tab_width > 0 {
-                    let click_x = mouse.column.saturating_sub(tabs_area.x);
-                    let tab_index = (click_x / tab_width) as usize;
+                if let Some(tab_index) = mouse
+                    .column
+                    .saturating_sub(tabs_area.x)
+                    .checked_div(tab_width)
+                {
+                    let tab_index = tab_index as usize;
                     if tab_index < Tab::ALL.len() {
                         app.active_tab = Tab::ALL[tab_index];
                         app.refresh().await;
