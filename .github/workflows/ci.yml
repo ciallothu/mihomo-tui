@@ -47,11 +47,6 @@ jobs:
             artifact: mihomo-tui-linux-arm64
             mihomo_os: linux
             mihomo_arch: arm64
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: mihomo-tui-macos-amd64
-            mihomo_os: darwin
-            mihomo_arch: amd64
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: mihomo-tui-macos-arm64
@@ -171,7 +166,6 @@ jobs:
             ### Downloads
             - **Linux amd64**: `mihomo-tui-linux-amd64.tar.gz` (includes `mihomo-tui` + `mihomo`)
             - **Linux arm64**: `mihomo-tui-linux-arm64.tar.gz` (includes `mihomo-tui` + `mihomo`)
-            - **macOS amd64**: `mihomo-tui-macos-amd64.tar.gz` (includes `mihomo-tui` + `mihomo`)
             - **macOS arm64**: `mihomo-tui-macos-arm64.tar.gz` (includes `mihomo-tui` + `mihomo`)
             - **Windows amd64**: `mihomo-tui-windows-amd64.exe.zip` (includes `mihomo-tui.exe` + `mihomo.exe`)
 
