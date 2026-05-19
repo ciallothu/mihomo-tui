@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use crate::api::client::MihomoClient;
 use crate::api::types::*;
 use crate::config::AppConfig;
+use crate::core::kernel::{GithubRelease, KernelManager};
+use anyhow::bail;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AppMode – tab identifiers
@@ -172,6 +174,10 @@ pub struct KernelState {
     pub current_version: String,
     /// Available versions from GitHub.
     pub available_versions: Vec<String>,
+    /// Locally installed versions.
+    pub installed_versions: Vec<String>,
+    /// Full release data for download.
+    pub releases: Vec<GithubRelease>,
     /// Selected index.
     pub selected: usize,
     /// Download progress (0..100).
@@ -202,6 +208,7 @@ pub struct App {
     // ── Configuration & API ──────────────────────────────────────────────
     pub config: AppConfig,
     pub client: MihomoClient,
+    pub kernel_manager: KernelManager,
 
     // ── Core UI state ────────────────────────────────────────────────────
     pub mode: AppMode,
@@ -238,6 +245,9 @@ pub struct App {
 
     // ── Status message ───────────────────────────────────────────────────
     pub status_message: String,
+
+    /// Set when initial connection to mihomo API fails.
+    pub connection_error: Option<String>,
 }
 
 impl App {
@@ -247,9 +257,13 @@ impl App {
         let secret = config.api_secret.clone();
         let client = MihomoClient::new(&base_url, &secret);
 
+        let data_dir = dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let kernel_manager = KernelManager::new(&data_dir);
+
         Self {
             config,
             client,
+            kernel_manager,
             mode: AppMode::default(),
             running: true,
             show_help: false,
@@ -272,6 +286,7 @@ impl App {
 
             search: SearchState::default(),
             status_message: String::new(),
+            connection_error: None,
         }
     }
 
@@ -463,6 +478,67 @@ impl App {
     pub async fn refresh_version(&mut self) -> anyhow::Result<()> {
         let resp = self.client.get_version().await?;
         self.version = resp.version;
+        Ok(())
+    }
+
+    /// Fetch available versions from GitHub and list installed versions.
+    pub async fn refresh_kernel(&mut self) -> anyhow::Result<()> {
+        // Fetch remote releases
+        let releases = self.kernel_manager.list_remote_versions().await?;
+        self.kernel.available_versions = releases.iter().map(|r| r.tag_name.clone()).collect();
+        self.kernel.releases = releases;
+        // Fetch installed versions
+        self.kernel.installed_versions = self
+            .kernel_manager
+            .list_installed_versions()
+            .unwrap_or_default();
+        // Set current active version
+        self.kernel.current_version = self.kernel_manager.get_active_version().unwrap_or_default();
+        Ok(())
+    }
+
+    /// Download the selected kernel version from GitHub.
+    pub async fn download_selected_kernel(&mut self) -> anyhow::Result<()> {
+        let idx = self.kernel.selected;
+        let releases = &self.kernel.releases;
+        if idx >= releases.len() {
+            bail!("no version selected");
+        }
+        self.kernel.downloading = true;
+        let result = self.kernel_manager.download_version(&releases[idx]).await;
+        self.kernel.downloading = false;
+        if let Err(e) = &result {
+            self.status_message = format!("Download failed: {e}");
+        } else {
+            // Refresh installed list
+            self.kernel.installed_versions = self
+                .kernel_manager
+                .list_installed_versions()
+                .unwrap_or_default();
+            let tag = &releases[idx].tag_name;
+            self.status_message = format!("Downloaded {tag}");
+        }
+        result?;
+        Ok(())
+    }
+
+    /// Switch to the selected kernel version.
+    pub async fn switch_selected_kernel(&mut self) -> anyhow::Result<()> {
+        let idx = self.kernel.selected;
+        let versions = &self.kernel.available_versions;
+        if idx >= versions.len() {
+            bail!("no version selected");
+        }
+        let version = &versions[idx];
+        // Check if installed
+        if !self.kernel.installed_versions.contains(version) {
+            self.status_message =
+                format!("{version} not installed locally, press 'd' to download first");
+            return Ok(());
+        }
+        self.kernel_manager.set_active_version(version)?;
+        self.kernel.current_version = version.clone();
+        self.status_message = format!("Switched to {version}");
         Ok(())
     }
 
@@ -761,7 +837,7 @@ impl App {
                 let _ = self.refresh_providers().await;
             }
             AppMode::Kernel => {
-                let _ = self.refresh_version().await;
+                let _ = self.refresh_kernel().await;
             }
             AppMode::Logs => {}
         }

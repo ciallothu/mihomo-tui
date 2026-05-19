@@ -20,6 +20,8 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use tokio::sync::mpsc;
 
 use app::{App, AppMode};
@@ -246,12 +248,29 @@ async fn run_app(
     });
 
     // ── Initial data fetch ───────────────────────────────────────────────
-    app.refresh_proxies().await.ok();
-    app.refresh_config().await.ok();
-    app.refresh_version().await.ok();
-    app.refresh_connections().await.ok();
-    app.refresh_rules().await.ok();
-    app.refresh_providers().await.ok();
+    // Quick connectivity check with a short timeout so the TUI appears fast.
+    let initial_ok = tokio::time::timeout(Duration::from_secs(3), app.refresh_version())
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false);
+
+    if initial_ok {
+        // Connected — fetch remaining data concurrently where possible.
+        app.refresh_proxies().await.ok();
+        app.refresh_config().await.ok();
+        app.refresh_connections().await.ok();
+        app.refresh_rules().await.ok();
+        app.refresh_providers().await.ok();
+        let _ = app.refresh_kernel().await;
+    }
+
+    // Check if we can reach mihomo at all
+    if app.version.is_empty() {
+        app.connection_error = Some(format!(
+            "Cannot connect to mihomo at {}",
+            app.config.api_base_url
+        ));
+    }
 
     // ── Periodic refresh interval counter ────────────────────────────────
     let mut tick_counter: u64 = 0;
@@ -345,6 +364,24 @@ async fn handle_key_event(app: &mut App, ev: Event, _tx: &mpsc::Sender<AppEvent>
         return;
     }
 
+    // If connection error overlay is shown, handle retry/quit.
+    if app.connection_error.is_some() {
+        if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
+            app.quit();
+        } else {
+            // Retry connection
+            app.connection_error = None;
+            let _ = app.refresh_version().await;
+            if app.version.is_empty() {
+                app.connection_error = Some(format!(
+                    "Cannot connect to mihomo at {}",
+                    app.config.api_base_url
+                ));
+            }
+        }
+        return;
+    }
+
     match key.code {
         // ── Quit ──────────────────────────────────────────────────────
         KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -410,6 +447,13 @@ async fn handle_key_event(app: &mut App, ev: Event, _tx: &mpsc::Sender<AppEvent>
         KeyCode::Char('D') if app.mode == AppMode::Connections => {
             app.close_all_connections().await.ok();
         }
+        // Kernel panel keys
+        KeyCode::Char('d') if app.mode == AppMode::Kernel => {
+            app.download_selected_kernel().await.ok();
+        }
+        KeyCode::Char('r') if app.mode == AppMode::Kernel => {
+            app.refresh_kernel().await.ok();
+        }
         KeyCode::Char('M') if app.mode == AppMode::Config => {
             app.cycle_mode().await.ok();
         }
@@ -474,6 +518,9 @@ async fn handle_enter(app: &mut App) {
         AppMode::Logs => {
             app.logs.auto_scroll = !app.logs.auto_scroll;
         }
+        AppMode::Kernel => {
+            app.switch_selected_kernel().await.ok();
+        }
         _ => {}
     }
 }
@@ -536,6 +583,12 @@ fn render_ui(f: &mut ratatui::Frame, app: &mut App) {
         render_help(f, size);
     }
 
+    // Overlay: connection error.
+    if let Some(ref err) = app.connection_error {
+        let msg = format!(" {err} \n\n Press any key to retry, q to quit ");
+        render_error_popup(f, size, &msg);
+    }
+
     // Overlay: search bar.
     if app.search.active || !app.search.query.is_empty() {
         let search_area = Rect {
@@ -563,4 +616,26 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{bytes} B/s")
     }
+}
+
+/// Render a centered error popup with a red border.
+fn render_error_popup(f: &mut ratatui::Frame, size: Rect, msg: &str) {
+    // Calculate centered area for the popup.
+    let width = size.width.clamp(30, 70);
+    let height = 5u16;
+    let x = size.x + (size.width.saturating_sub(width)) / 2;
+    let y = size.y + (size.height.saturating_sub(height)) / 2;
+    let area = Rect::new(x, y, width, height);
+
+    let paragraph = Paragraph::new(msg.to_owned())
+        .style(Style::default().fg(Color::Red))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Thick)
+                .border_style(Style::default().fg(Color::Red)),
+        )
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(paragraph, area);
 }
