@@ -30,7 +30,7 @@ jobs:
       - name: check
         run: cargo check --locked
 
-  # ─── Build matrix (Linux x86_64, Linux aarch64, macOS, Windows) ─
+  # ─── Build matrix (Linux x86_64, Linux aarch64, macOS, Windows) ──
   build:
     name: Build ${{ matrix.target }}
     needs: check
@@ -40,18 +40,28 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: mihomo-tui-linux-amd64
+            mihomo_os: linux
+            mihomo_arch: amd64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: mihomo-tui-linux-arm64
+            mihomo_os: linux
+            mihomo_arch: arm64
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact: mihomo-tui-macos-amd64
+            mihomo_os: darwin
+            mihomo_arch: amd64
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: mihomo-tui-macos-arm64
+            mihomo_os: darwin
+            mihomo_arch: arm64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             artifact: mihomo-tui-windows-amd64.exe
+            mihomo_os: windows
+            mihomo_arch: amd64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -73,19 +83,44 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
+      - name: Download mihomo kernel (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          MIHOMO_TAG=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
+          MIHOMO_VER=${MIHOMO_TAG#v}
+          echo "Downloading mihomo ${MIHOMO_TAG} for ${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}"
+          curl -sL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}-${MIHOMO_VER}.gz"
+          gunzip -f mihomo.gz
+          chmod +x mihomo
+          mv mihomo target/${{ matrix.target }}/release/mihomo
+
+      - name: Download mihomo kernel (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest').tag_name
+          $ver = $tag.TrimStart('v')
+          $url = "https://github.com/MetaCubeX/mihomo/releases/download/${tag}/mihomo-windows-${{ matrix.mihomo_arch }}-${ver}.zip"
+          Write-Host "Downloading mihomo ${tag} for windows-${{ matrix.mihomo_arch }}"
+          Invoke-WebRequest -Uri $url -OutFile mihomo.zip
+          Expand-Archive -Path mihomo.zip -DestinationPath mihomo-kernel
+          $binary = Get-ChildItem -Path mihomo-kernel -Filter *.exe -Recurse | Select-Object -First 1
+          Copy-Item $binary.FullName target/${{ matrix.target }}/release/mihomo.exe
+
       - name: Prepare artifact (Unix)
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
           strip mihomo-tui 2>/dev/null || true
           chmod +x mihomo-tui
-          tar czf ${{ github.workspace }}/${{ matrix.artifact }}.tar.gz mihomo-tui
+          tar czf ${{ github.workspace }}/${{ matrix.artifact }}.tar.gz mihomo-tui mihomo
 
       - name: Prepare artifact (Windows)
         if: runner.os == 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path mihomo-tui.exe -DestinationPath "${{ github.workspace }}/${{ matrix.artifact }}.zip"
+          Compress-Archive -Path mihomo-tui.exe,mihomo.exe -DestinationPath "${{ github.workspace }}/${{ matrix.artifact }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -131,12 +166,14 @@ jobs:
 
             A cross-platform terminal UI for mihomo (Clash.Meta) proxy kernel.
 
+            **Each release artifact includes the latest mihomo kernel binary bundled alongside mihomo-tui.**
+
             ### Downloads
-            - **Linux amd64**: `mihomo-tui-linux-amd64.tar.gz`
-            - **Linux arm64**: `mihomo-tui-linux-arm64.tar.gz`
-            - **macOS amd64**: `mihomo-tui-macos-amd64.tar.gz`
-            - **macOS arm64**: `mihomo-tui-macos-arm64.tar.gz`
-            - **Windows amd64**: `mihomo-tui-windows-amd64.exe.zip`
+            - **Linux amd64**: `mihomo-tui-linux-amd64.tar.gz` (includes `mihomo-tui` + `mihomo`)
+            - **Linux arm64**: `mihomo-tui-linux-arm64.tar.gz` (includes `mihomo-tui` + `mihomo`)
+            - **macOS amd64**: `mihomo-tui-macos-amd64.tar.gz` (includes `mihomo-tui` + `mihomo`)
+            - **macOS arm64**: `mihomo-tui-macos-arm64.tar.gz` (includes `mihomo-tui` + `mihomo`)
+            - **Windows amd64**: `mihomo-tui-windows-amd64.exe.zip` (includes `mihomo-tui.exe` + `mihomo.exe`)
 
             See `checksums-sha256.txt` for SHA-256 verification.
           files: |

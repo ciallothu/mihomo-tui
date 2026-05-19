@@ -254,22 +254,32 @@ async fn run_app(
         .map(|r| r.is_ok())
         .unwrap_or(false);
 
-    if initial_ok {
-        // Connected — fetch remaining data concurrently where possible.
+    if !initial_ok {
+        // API unreachable — try to auto-start mihomo kernel.
+        match app.ensure_mihomo_running().await {
+            Ok(()) => {
+                // mihomo started successfully, will fetch data below.
+            }
+            Err(e) => {
+                app.connection_error = Some(format!(
+                    "Cannot start mihomo: {e}\n\n\
+                     Ensure mihomo kernel is installed.\n\
+                     Download it from Kernel tab (press r → d) or\n\
+                     place `mihomo` binary next to mihomo-tui.\n\n\
+                     Press q to quit"
+                ));
+            }
+        }
+    }
+
+    // Fetch all data if connected.
+    if app.connection_error.is_none() {
         app.refresh_proxies().await.ok();
         app.refresh_config().await.ok();
         app.refresh_connections().await.ok();
         app.refresh_rules().await.ok();
         app.refresh_providers().await.ok();
         let _ = app.refresh_kernel().await;
-    }
-
-    // Check if we can reach mihomo at all
-    if app.version.is_empty() {
-        app.connection_error = Some(format!(
-            "Cannot connect to mihomo at {}",
-            app.config.api_base_url
-        ));
     }
 
     // ── Periodic refresh interval counter ────────────────────────────────
@@ -316,6 +326,9 @@ async fn run_app(
             }
         }
     }
+
+    // Cleanup: stop mihomo if we started it.
+    app.mihomo_process.stop().await.ok();
 
     Ok(())
 }

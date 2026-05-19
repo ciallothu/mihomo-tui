@@ -8,6 +8,8 @@
 //! - [`provider`] – Interact with proxy/rule providers through the API.
 
 pub mod config_file;
+pub mod default_config;
 pub mod kernel;
+pub mod process;
 pub mod provider;
 pub mod subscription;

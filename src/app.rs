@@ -248,6 +248,9 @@ pub struct App {
 
     /// Set when initial connection to mihomo API fails.
     pub connection_error: Option<String>,
+
+    /// Managed mihomo subprocess (started by the TUI).
+    pub mihomo_process: crate::core::process::MihomoProcess,
 }
 
 impl App {
@@ -260,10 +263,40 @@ impl App {
         let data_dir = dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         let kernel_manager = KernelManager::new(&data_dir);
 
+        // Resolve mihomo binary path: try active version, then bundled, then PATH.
+        let mihomo_binary = kernel_manager
+            .get_active_version()
+            .and_then(|v| kernel_manager.get_binary_path(&v).ok())
+            .or_else(|| {
+                // Check for bundled mihomo next to the TUI binary
+                let bundled = std::env::current_exe()
+                    .ok()?
+                    .parent()?
+                    .join(if cfg!(windows) {
+                        "mihomo.exe"
+                    } else {
+                        "mihomo"
+                    });
+                if bundled.exists() {
+                    Some(bundled)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                // Final fallback: hope it's in PATH
+                std::path::PathBuf::from("mihomo")
+            });
+
+        let mihomo_work_dir = config.mihomo_config_dir.clone();
+        let mihomo_process =
+            crate::core::process::MihomoProcess::new(mihomo_binary, mihomo_work_dir);
+
         Self {
             config,
             client,
             kernel_manager,
+            mihomo_process,
             mode: AppMode::default(),
             running: true,
             show_help: false,
@@ -479,6 +512,46 @@ impl App {
         let resp = self.client.get_version().await?;
         self.version = resp.version;
         Ok(())
+    }
+
+    /// Try to auto-start mihomo if the API is unreachable.
+    ///
+    /// 1. Check if API is already alive.
+    /// 2. Generate a default config if none exists.
+    /// 3. Start the mihomo subprocess.
+    /// 4. Wait for it to become ready.
+    pub async fn ensure_mihomo_running(&mut self) -> anyhow::Result<()> {
+        // Quick check: is mihomo already reachable?
+        if self.refresh_version().await.is_ok() {
+            return Ok(());
+        }
+
+        // Ensure a default config exists so mihomo can start.
+        let config_dir = &self.config.mihomo_config_dir;
+        let created = crate::core::default_config::ensure_default_config(config_dir)?;
+        if created {
+            self.status_message = format!(
+                "Created default config at {}/config.yaml",
+                config_dir.display()
+            );
+        }
+
+        // Start the subprocess.
+        self.mihomo_process.start().await?;
+
+        // Wait up to 5 s for the API to become available.
+        for _ in 0..25 {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            if self.refresh_version().await.is_ok() {
+                self.status_message = "mihomo kernel started successfully".to_owned();
+                return Ok(());
+            }
+        }
+
+        anyhow::bail!(
+            "mihomo started but API is not reachable at {} after 5s",
+            self.config.api_base_url
+        );
     }
 
     /// Fetch available versions from GitHub and list installed versions.
