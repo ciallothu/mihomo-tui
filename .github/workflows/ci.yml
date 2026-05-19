@@ -82,8 +82,15 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          MIHOMO_TAG=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
-          MIHOMO_VER=${MIHOMO_TAG#v}
+          MIHOMO_TAG=$(curl -sL -H "Accept: application/vnd.github+json" https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
+          if [ "$MIHOMO_TAG" = "null" ] || [ -z "$MIHOMO_TAG" ]; then
+            echo "API rate-limited, fetching tag from releases page..."
+            MIHOMO_TAG=$(curl -sI https://github.com/MetaCubeX/mihomo/releases/latest | grep -i "^location:" | sed 's|.*/tag/||' | tr -d '\r\n')
+          fi
+          if [ "$MIHOMO_TAG" = "null" ] || [ -z "$MIHOMO_TAG" ]; then
+            echo "ERROR: Could not determine latest mihomo version"
+            exit 1
+          fi
           echo "Downloading mihomo ${MIHOMO_TAG} for ${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}"
           curl -sL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}-${MIHOMO_TAG}.gz"
           gunzip -f mihomo.gz
@@ -95,7 +102,16 @@ jobs:
         shell: pwsh
         run: |
           $tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest').tag_name
-          $ver = $tag.TrimStart('v')
+          if ($null -eq $tag -or $tag -eq '') {
+            Write-Host "API rate-limited, fetching tag from releases page..."
+            $resp = Invoke-WebRequest -Uri 'https://github.com/MetaCubeX/mihomo/releases/latest' -MaximumRedirection 0 -ErrorAction SilentlyContinue
+            $loc = $resp.Headers['Location']
+            $tag = $loc.Split('/')[-1]
+          }
+          if ($null -eq $tag -or $tag -eq '') {
+            Write-Error "Could not determine latest mihomo version"
+            exit 1
+          }
           $url = "https://github.com/MetaCubeX/mihomo/releases/download/${tag}/mihomo-windows-${{ matrix.mihomo_arch }}-${tag}.zip"
           Write-Host "Downloading mihomo ${tag} for windows-${{ matrix.mihomo_arch }}"
           Invoke-WebRequest -Uri $url -OutFile mihomo.zip
