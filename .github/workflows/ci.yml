@@ -85,7 +85,7 @@ jobs:
           MIHOMO_TAG=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           MIHOMO_VER=${MIHOMO_TAG#v}
           echo "Downloading mihomo ${MIHOMO_TAG} for ${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}"
-          curl -sL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}-${MIHOMO_VER}.gz"
+          curl -sL -o mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-${{ matrix.mihomo_os }}-${{ matrix.mihomo_arch }}-${MIHOMO_TAG}.gz"
           gunzip -f mihomo.gz
           chmod +x mihomo
           mv mihomo target/${{ matrix.target }}/release/mihomo
@@ -96,7 +96,7 @@ jobs:
         run: |
           $tag = (Invoke-RestMethod -Uri 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest').tag_name
           $ver = $tag.TrimStart('v')
-          $url = "https://github.com/MetaCubeX/mihomo/releases/download/${tag}/mihomo-windows-${{ matrix.mihomo_arch }}-${ver}.zip"
+          $url = "https://github.com/MetaCubeX/mihomo/releases/download/${tag}/mihomo-windows-${{ matrix.mihomo_arch }}-${tag}.zip"
           Write-Host "Downloading mihomo ${tag} for windows-${{ matrix.mihomo_arch }}"
           Invoke-WebRequest -Uri $url -OutFile mihomo.zip
           Expand-Archive -Path mihomo.zip -DestinationPath mihomo-kernel
